@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: shellcheck
+        run: shellcheck -x -P SCRIPTDIR/.. bin/routetrace lib/*.sh tests/*.sh bench/bench.sh
+
+  test:
+    # ubuntu runs bash 5.x, macOS ships bash 3.2: both must pass.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tool versions
+        run: bash --version | head -1 && python3 --version
+      - name: Tests
+        run: bash tests/run.sh
+      - name: Example traces
+        run: |
+          bin/routetrace check examples/campus
+          bin/routetrace trace examples/campus 10.1.0.20 10.3.0.20 -p tcp -d 22
+          bin/routetrace routes examples/campus R2
+      - name: Benchmark (quick)
+        run: bash bench/bench.sh --quick

@@ -1,0 +1,4 @@
+# Libraries return results through globals (REPLY, SUMMARY, RES_IF, ...)
+# that are read by other files, which shellcheck cannot see across sources.
+disable=SC2034
+external-sources=true
