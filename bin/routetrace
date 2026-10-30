@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# routetrace: offline IPv4 forwarding and ACL simulator for IOS-style configs.
+set -u
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=lib/ipv4.sh
+. "$ROOT/lib/ipv4.sh"
+# shellcheck source=lib/cidr.sh
+. "$ROOT/lib/cidr.sh"
+# shellcheck source=lib/rib.sh
+. "$ROOT/lib/rib.sh"
+# shellcheck source=lib/acl.sh
+. "$ROOT/lib/acl.sh"
+# shellcheck source=lib/topo.sh
+. "$ROOT/lib/topo.sh"
+# shellcheck source=lib/trace.sh
+. "$ROOT/lib/trace.sh"
+
+usage() {
+  cat <<'EOF'
+usage: routetrace <command> [args]
+
+  calc ADDR/LEN | ADDR MASK        subnet calculator
+  summarize PREFIX...              exact route summarization (stdin if no args)
+  vlsm PARENT NAME:HOSTS...        allocate subnets largest-first
+  routes DIR ROUTER                show ip route for one router
+  lookup DIR ROUTER ADDR           longest-prefix match on one router
+  acl DIR ROUTER ACL PROTO SRC DST [SPORT DPORT]
+                                   evaluate one ACL against a packet
+  trace DIR SRC DST [options]      forward a packet hop by hop
+      -p PROTO      ip|tcp|udp|icmp|<number>  (default icmp)
+      -s PORT       source port (default 40000)
+      -d PORT       destination port (default 0)
+      -e            TCP packet belongs to an established session
+      -f ROUTER     first-hop router (default: gateway of SRC's segment)
+      -q            only print the RESULT line
+  check DIR                        report configuration problems
+
+DIR is a directory of IOS-style router configs named *.cfg.
+EOF
+}
+
+die() { echo "routetrace: $*" >&2; exit 2; }
+
+load() { topo_load "$1" || exit 2; }
+
+router() {
+  topo_router_id "$1" || die "unknown router: $1"
+  RID=$REPLY
+}
+
+cmd=${1-}
+[[ $# -gt 0 ]] && shift
+case $cmd in
+  calc)
+    [[ $# -ge 1 ]] || die "calc needs an address"
+    cidr_info "$@" || exit 2
+    ;;
+  summarize)
+    if [[ $# -eq 0 ]]; then
+      args=()
+      while read -r p; do [[ -n $p ]] && args[${#args[@]}]=$p; done
+      set -- "${args[@]}"
+    fi
+    cidr_summarize "$@" || exit 2
+    [[ ${#SUMMARY[@]} -gt 0 ]] && printf '%s\n' "${SUMMARY[@]}"
+    ;;
+  vlsm)
+    [[ $# -ge 2 ]] || die "vlsm needs PARENT and at least one NAME:HOSTS"
+    printf '%-12s %6s  %-18s %6s  %s\n' name wanted subnet usable range
+    cidr_vlsm "$@" || exit 1
+    ;;
+  routes)
+    [[ $# -eq 2 ]] || die "usage: routes DIR ROUTER"
+    load "$1"; router "$2"
+    topo_show_routes "$RID"
+    ;;
+  lookup)
+    [[ $# -eq 3 ]] || die "usage: lookup DIR ROUTER ADDR"
+    load "$1"; router "$2"
+    ip_to_int "$3" || die "bad address: $3"
+    rib_lookup "$RID" "$REPLY" || { echo "no route"; exit 1; }
+    topo_route_text "$REPLY"
+    echo "$REPLY"
+    ;;
+  acl)
+    [[ $# -ge 6 ]] || die "usage: acl DIR ROUTER ACL PROTO SRC DST [SPORT DPORT]"
+    load "$1"; router "$2"
+    acl_find "$RID" "$3" || die "no ACL $3 on $2"
+    a=$REPLY
+    proto_number "$4" || die "bad protocol: $4"; pr=$REPLY
+    ip_to_int "$5" || die "bad address: $5"; s=$REPLY
+    ip_to_int "$6" || die "bad address: $6"; d=$REPLY
+    acl_eval "$a" "$pr" "$s" "$d" "${7:-0}" "${8:-0}" 0
+    if ((ACL_HIT < 0)); then
+      echo "$REPLY (implicit deny)"
+    else
+      echo "$REPLY (matched: ${ACE_TEXT[ACL_HIT]})"
+    fi
+    [[ $REPLY == permit ]]
+    ;;
+  trace)
+    [[ $# -ge 3 ]] || die "usage: trace DIR SRC DST [options]"
+    dir=$1 src=$2 dst=$3
+    shift 3
+    proto=icmp sport=40000 dport=0 est=0 from="" TRACE_QUIET=0
+    while getopts 'p:s:d:ef:q' opt; do
+      case $opt in
+        p) proto=$OPTARG ;;
+        s) sport=$OPTARG ;;
+        d) dport=$OPTARG ;;
+        e) est=1 ;;
+        f) from=$OPTARG ;;
+        q) TRACE_QUIET=1 ;;
+        *) usage >&2; exit 2 ;;
+      esac
+    done
+    port_number "$sport" || die "bad source port: $sport"; sport=$REPLY
+    port_number "$dport" || die "bad destination port: $dport"; dport=$REPLY
+    load "$dir"
+    if ((TRACE_QUIET)); then
+      trace_packet "$src" "$dst" "$proto" "$sport" "$dport" "$est" "$from"
+      rc=$?
+      ((rc == 2)) || echo "RESULT $TRACE_RESULT $TRACE_REASON (hops: $TRACE_HOPS)"
+      exit "$rc"
+    fi
+    trace_packet "$src" "$dst" "$proto" "$sport" "$dport" "$est" "$from"
+    ;;
+  check)
+    [[ $# -eq 1 ]] || die "usage: check DIR"
+    load "$1"
+    topo_check
+    echo "${REPLY} problem(s) found in ${#R_NAME[@]} router(s)"
+    [[ $REPLY -eq 0 ]]
+    ;;
+  -h | --help | help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac
