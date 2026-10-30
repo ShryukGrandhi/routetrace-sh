@@ -1,0 +1,17 @@
+{
+  "name": "routetrace-sh",
+  "language": "Shell",
+  "tech": ["Bash", "IPv4 routing", "Cisco IOS ACLs", "subnetting / CIDR", "shellcheck", "GitHub Actions"],
+  "targets": ["Bash scripting", "networking fundamentals", "TCP/IP routing and longest-prefix match", "access control lists", "subnetting and VLSM", "automated testing and CI"],
+  "bullets": [
+    "Built a Bash IPv4 forwarding simulator that parses Cisco IOS configs and traces packets hop by hop through routing tables, recursive next hops, ACLs and TTL",
+    "Designed hash-indexed longest-prefix match in pure Bash: 22,895 lookups/s at 10,000 routes on bash 5.2, 1396x faster than a linear scan, verified against Python ipaddress",
+    "Wrote 64 tests incl. randomized checks of CIDR math, summarization and ACL wildcards vs Python; CI runs shellcheck and tests on Linux bash 5 and macOS bash 3.2"
+  ],
+  "summary": {
+    "what": "A command-line tool, written in Bash, that loads a directory of Cisco IOS-style router configs and shows how an IPv4 packet would be forwarded: which route each router picks, which ACL entry permits or drops it, and where it ends up. It also does subnet math, exact route summarization, VLSM allocation and config checks (duplicate IPs, mask mismatches, undefined ACLs, unresolvable static routes).",
+    "how": "Addresses are 32-bit integers in Bash arithmetic. Each router's RIB stores the best route per prefix in a shell variable named after router, prefix length and network, so longest-prefix match is one hash probe per prefix length. Static routes are installed only when their next hop resolves, iterated to a fixed point, which gives IOS-like floating static behaviour. ACLs are evaluated first-match with wildcard masks and port operators. Functions return through globals to avoid subshell forks. Tests compare against Python's ipaddress module on random inputs.",
+    "hardest": "Getting fast lookups in a language whose arrays are linked lists: a trie on indexed arrays would walk lists on every node, so I used the shell's variable hash table as the index. Also matching real IOS semantics, such as a static route staying up because its next hop resolves via the default route, and keeping the code working on both bash 3.2 and 5.2 (5.2 rejected nested array subscripts that 3.2 accepted).",
+    "say": "I built routetrace-sh, a Bash tool that reads Cisco-style router configs and traces a packet hop by hop, telling you which route and which ACL line decided its fate. The core is a longest-prefix-match table that uses Bash's variable hash table, so lookups stay flat at about 22,000 per second from 100 to 10,000 routes on bash 5.2, where a linear scan drops to 16 per second. I checked correctness with randomized tests against Python's ipaddress module, and CI runs it on both Linux and macOS."
+  }
+}
